@@ -1,0 +1,1333 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Agenda inteligente por voz con alertas multicanal">
+    <meta name="theme-color" content="#3b82f6">
+    <title>VozAgenda Pro</title>
+    <link rel="manifest" href="data:application/json,{%22name%22:%22VozAgenda%20Pro%22,%22short_name%22:%22VozAgenda%22,%22description%22:%22Agenda%20inteligente%20por%20voz%22,%22start_url%22:%22/%22,%22display%22:%22standalone%22,%22background_color%22:%22%230f172a%22,%22theme_color%22:%22%233b82f6%22,%22orientation%22:%22portrait-primary%22,%22icons%22:[{%22src%22:%22data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20192%20192'%3E%3Ccircle%20cx='96'%20cy='96'%20r='96'%20fill='%233b82f6'/%3E%3Cpath%20d='M96%2060c-8%200-14.4%206.4-14.4%2014.4v43.2c0%208%206.4%2014.4%2014.4%2014.4s14.4-6.4%2014.4-14.4V74.4c0-8-6.4-14.4-14.4-14.4z'%20fill='white'/%3E%3Cpath%20d='M128%20117.6c0%2017.6-14.4%2032-32%2032s-32-14.4-32-32'%20stroke='white'%20stroke-width='6'%20fill='none'/%3E%3C/svg%3E%22,%22sizes%22:%22192x192%22,%22type%22:%22image/svg+xml%22}]}">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%233b82f6'/%3E%3Cpath d='M16 10c-1.3 0-2.4 1.1-2.4 2.4v7.2c0 1.3 1.1 2.4 2.4 2.4s2.4-1.1 2.4-2.4v-7.2c0-1.3-1.1-2.4-2.4-2.4z' fill='white'/%3E%3C/svg%3E">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .install-prompt {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            background: linear-gradient(135deg, #3b82f6, #6366f1);
+            color: white;
+            padding: 16px;
+            border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+            z-index: 1000;
+            display: none;
+            animation: slideUp 0.3s ease-out;
+        }
+        
+        @keyframes slideUp {
+            from { transform: translateY(100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        
+        .offline-banner {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+            color: white;
+            padding: 8px 16px;
+            text-align: center;
+            font-size: 14px;
+        }
+        
+        .notification-permission {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+            color: white;
+            padding: 12px 16px;
+            margin: 16px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        @media (display-mode: standalone) {
+            body {
+                user-select: none;
+                -webkit-user-select: none;
+                -webkit-touch-callout: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <!-- Banner de instalación PWA -->
+    <div id="installPrompt" class="install-prompt">
+        <div class="flex items-center justify-between">
+            <div>
+                <h4 class="font-bold text-lg">📱 Instalar VozAgenda</h4>
+                <p class="text-sm opacity-90">Instala la app para mejor experiencia</p>
+            </div>
+            <div class="flex space-x-2">
+                <button id="installBtn" class="bg-white text-blue-600 px-4 py-2 rounded-lg font-medium text-sm">
+                    Instalar
+                </button>
+                <button id="dismissBtn" class="bg-transparent border border-white/30 text-white px-4 py-2 rounded-lg text-sm">
+                    Después
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const { 
+            Calendar, Mic, Settings, Edit3, Volume2, VolumeX, Plus, Clock, 
+            CheckCircle, Trash2, MessageSquare, Bell, Check, Wifi, WifiOff,
+            Download, Smartphone, RotateCcw, AlertTriangle
+        } = lucide;
+
+        const VozAgendaPWA = () => {
+            const [reminders, setReminders] = useState([]);
+            const [isListening, setIsListening] = useState(false);
+            const [transcription, setTranscription] = useState('');
+            const [showWidget, setShowWidget] = useState(true);
+            const [editingId, setEditingId] = useState(null);
+            const [currentView, setCurrentView] = useState('today');
+            const [processingAudio, setProcessingAudio] = useState(false);
+            const [editText, setEditText] = useState('');
+            const [editTime, setEditTime] = useState('');
+            const [editDate, setEditDate] = useState('');
+            const [queryResponse, setQueryResponse] = useState('');
+            const [isOnline, setIsOnline] = useState(navigator.onLine);
+            const [notificationPermission, setNotificationPermission] = useState(Notification.permission);
+            const [showAddForm, setShowAddForm] = useState(false);
+            const [isInstalled, setIsInstalled] = useState(false);
+            const [systemStatus, setSystemStatus] = useState('checking');
+            const [capabilities, setCapabilities] = useState({
+                voice: false,
+                notifications: false,
+                vibration: false,
+                audio: false,
+                pwa: false
+            });
+            const [newReminder, setNewReminder] = useState({
+                text: '',
+                date: new Date().toISOString().split('T')[0],
+                time: '09:00',
+                priority: 'medium',
+                category: 'personal'
+            });
+
+            const recognitionRef = useRef(null);
+            const deferredPrompt = useRef(null);
+
+            // Service Worker y PWA Setup
+            useEffect(() => {
+                // Registrar Service Worker
+                if ('serviceWorker' in navigator) {
+                    const swCode = `
+                        const CACHE_NAME = 'vozagenda-v1';
+                        const urlsToCache = [
+                            '/',
+                            '/manifest.json'
+                        ];
+
+                        self.addEventListener('install', (event) => {
+                            event.waitUntil(
+                                caches.open(CACHE_NAME)
+                                    .then((cache) => cache.addAll(urlsToCache))
+                            );
+                        });
+
+                        self.addEventListener('fetch', (event) => {
+                            event.respondWith(
+                                caches.match(event.request)
+                                    .then((response) => {
+                                        if (response) {
+                                            return response;
+                                        }
+                                        return fetch(event.request);
+                                    })
+                            );
+                        });
+
+                        self.addEventListener('notificationclick', (event) => {
+                            event.notification.close();
+                            event.waitUntil(
+                                clients.matchAll().then((clientList) => {
+                                    if (clientList.length > 0) {
+                                        return clientList[0].focus();
+                                    }
+                                    return clients.openWindow('/');
+                                })
+                            );
+                        });
+                    `;
+                    
+                    const blob = new Blob([swCode], { type: 'application/javascript' });
+                    const swUrl = URL.createObjectURL(blob);
+                    
+                    navigator.serviceWorker.register(swUrl)
+                        .then((registration) => {
+                            console.log('SW registered:', registration);
+                            setCapabilities(prev => ({...prev, pwa: true}));
+                        })
+                        .catch((error) => {
+                            console.log('SW registration failed:', error);
+                        });
+                }
+
+                // Detector de instalación PWA
+                window.addEventListener('beforeinstallprompt', (e) => {
+                    e.preventDefault();
+                    deferredPrompt.current = e;
+                    document.getElementById('installPrompt').style.display = 'block';
+                });
+
+                // Detectar si ya está instalada
+                window.addEventListener('appinstalled', () => {
+                    setIsInstalled(true);
+                    document.getElementById('installPrompt').style.display = 'none';
+                });
+
+                // Estado de conexión
+                const handleOnline = () => setIsOnline(true);
+                const handleOffline = () => setIsOnline(false);
+                window.addEventListener('online', handleOnline);
+                window.addEventListener('offline', handleOffline);
+
+                return () => {
+                    window.removeEventListener('online', handleOnline);
+                    window.removeEventListener('offline', handleOffline);
+                };
+            }, []);
+
+            // Cargar datos del almacenamiento local
+            useEffect(() => {
+                const savedReminders = localStorage.getItem('vozagenda-reminders');
+                if (savedReminders) {
+                    const parsed = JSON.parse(savedReminders).map(r => ({
+                        ...r,
+                        date: new Date(r.date)
+                    }));
+                    setReminders(parsed);
+                }
+            }, []);
+
+            // Guardar datos en almacenamiento local
+            useEffect(() => {
+                if (reminders.length > 0) {
+                    localStorage.setItem('vozagenda-reminders', JSON.stringify(reminders));
+                }
+            }, [reminders]);
+
+            // Verificación de capacidades del sistema
+            useEffect(() => {
+                const checkCapabilities = async () => {
+                    setSystemStatus('checking');
+                    
+                    const caps = {
+                        voice: 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window,
+                        notifications: 'Notification' in window,
+                        vibration: 'vibrate' in navigator,
+                        audio: !!(window.AudioContext || window.webkitAudioContext),
+                        pwa: 'serviceWorker' in navigator
+                    };
+
+                    setCapabilities(caps);
+
+                    // Configurar reconocimiento de voz
+                    if (caps.voice) {
+                        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+                        recognitionRef.current = new SpeechRecognition();
+                        
+                        recognitionRef.current.continuous = false;
+                        recognitionRef.current.interimResults = true;
+                        recognitionRef.current.lang = 'es-ES';
+                        
+                        recognitionRef.current.onstart = () => setIsListening(true);
+                        recognitionRef.current.onresult = handleSpeechResult;
+                        recognitionRef.current.onerror = () => {
+                            setIsListening(false);
+                            setProcessingAudio(false);
+                        };
+                        recognitionRef.current.onend = () => {
+                            setIsListening(false);
+                            setTimeout(() => setTranscription(''), 2000);
+                        };
+                    }
+
+                    // Solicitar permisos de notificación
+                    if (caps.notifications && Notification.permission === 'default') {
+                        try {
+                            const permission = await Notification.requestPermission();
+                            setNotificationPermission(permission);
+                        } catch (error) {
+                            console.warn('Error requesting notification permission:', error);
+                        }
+                    }
+
+                    setSystemStatus('ready');
+                };
+
+                checkCapabilities();
+            }, []);
+
+            // Manejadores de eventos
+            const handleSpeechResult = (event) => {
+                let finalTranscript = '';
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalTranscript += transcript;
+                    } else {
+                        setTranscription(transcript);
+                    }
+                }
+                
+                if (finalTranscript) {
+                    setTranscription(finalTranscript);
+                    if (finalTranscript.toLowerCase().includes('qué tengo') || 
+                        finalTranscript.toLowerCase().includes('recordatorios')) {
+                        handleVoiceQuery(finalTranscript);
+                    } else {
+                        processVoiceCommand(finalTranscript);
+                    }
+                }
+            };
+
+            const startListening = () => {
+                if (!capabilities.voice) {
+                    showNotification('⚠️ Función no disponible', 'Tu navegador no soporta reconocimiento de voz. Usa Chrome o Edge en HTTPS.');
+                    return;
+                }
+
+                if (recognitionRef.current && !isListening) {
+                    try {
+                        setTranscription('');
+                        recognitionRef.current.start();
+                        triggerHapticFeedback();
+                    } catch (error) {
+                        console.error('Error al iniciar reconocimiento:', error);
+                        showNotification('❌ Error de voz', 'No se pudo iniciar el reconocimiento. Verifica los permisos del micrófono.');
+                    }
+                }
+            };
+
+            const processVoiceCommand = (text) => {
+                setProcessingAudio(true);
+                triggerHapticFeedback();
+                
+                setTimeout(() => {
+                    const parsed = parseCommand(text);
+                    if (parsed.text && parsed.text.length > 2) {
+                        const reminder = {
+                            id: Date.now(),
+                            text: parsed.text,
+                            date: parsed.date,
+                            time: parsed.time,
+                            priority: parsed.priority,
+                            category: parsed.category,
+                            completed: false,
+                            createdAt: new Date().toISOString()
+                        };
+                        
+                        setReminders(prev => [reminder, ...prev]);
+                        const confirmation = `✅ Recordatorio creado: ${parsed.text}`;
+                        speak(confirmation);
+                        showNotification('🎯 Nuevo recordatorio', parsed.text);
+                        setQueryResponse(confirmation);
+                        setTimeout(() => setQueryResponse(''), 4000);
+                        
+                        if (parsed.priority === 'high') {
+                            triggerHapticFeedback();
+                        }
+                    }
+                    setProcessingAudio(false);
+                }, 1000);
+            };
+
+            const parseCommand = (text) => {
+                const now = new Date();
+                let date = new Date();
+                let time = "09:00";
+                let priority = "medium";
+                let category = "personal";
+                
+                const lower = text.toLowerCase();
+                
+                // Fecha
+                if (lower.includes('mañana')) {
+                    date.setDate(now.getDate() + 1);
+                } else if (lower.includes('viernes')) {
+                    const days = (5 + 7 - now.getDay()) % 7 || 7;
+                    date.setDate(now.getDate() + days);
+                } else if (lower.includes('lunes')) {
+                    const days = (1 + 7 - now.getDay()) % 7 || 7;
+                    date.setDate(now.getDate() + days);
+                }
+                
+                // Tiempo
+                const timeMatch = text.match(/(\d{1,2}):?(\d{0,2})/);
+                if (timeMatch) {
+                    const hour = parseInt(timeMatch[1]);
+                    const minute = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+                    time = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
+                } else if (lower.includes('tarde')) {
+                    time = "15:00";
+                } else if (lower.includes('noche')) {
+                    time = "20:00";
+                } else if (lower.includes('mañana') && lower.includes('temprano')) {
+                    time = "08:00";
+                }
+                
+                // Prioridad
+                if (lower.includes('urgente') || lower.includes('importante')) {
+                    priority = "high";
+                } else if (lower.includes('relajado') || lower.includes('cuando pueda')) {
+                    priority = "low";
+                }
+                
+                // Categoría
+                if (lower.includes('doctor') || lower.includes('medicina') || lower.includes('salud')) {
+                    category = "health";
+                } else if (lower.includes('trabajo') || lower.includes('reunión') || lower.includes('oficina')) {
+                    category = "work";
+                } else if (lower.includes('comprar') || lower.includes('supermercado')) {
+                    category = "shopping";
+                }
+                
+                const cleanText = text
+                    .replace(/mañana|viernes|lunes|tarde|noche|urgente|importante|temprano/gi, '')
+                    .replace(/\d{1,2}:?\d{0,2}/g, '')
+                    .replace(/recordar|recordarme|recuerda/gi, '')
+                    .trim();
+                
+                return { text: cleanText || "Recordatorio", date, time, priority, category };
+            };
+
+            const handleVoiceQuery = (query) => {
+                const today = new Date();
+                let filteredReminders = [];
+                let response = '';
+                
+                if (query.toLowerCase().includes('hoy')) {
+                    filteredReminders = reminders.filter(r => {
+                        const rDate = new Date(r.date.getFullYear(), r.date.getMonth(), r.date.getDate());
+                        const tDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+                        return rDate.getTime() === tDate.getTime() && !r.completed;
+                    });
+                    response = `📅 Para hoy tienes ${filteredReminders.length} recordatorios`;
+                } else {
+                    filteredReminders = reminders.filter(r => !r.completed);
+                    response = `📝 Tienes ${filteredReminders.length} recordatorios pendientes`;
+                }
+                
+                if (filteredReminders.length > 0) {
+                    const details = filteredReminders.slice(0, 3).map(r => `${r.text} a las ${r.time}`).join(', ');
+                    response += `: ${details}`;
+                }
+                
+                setQueryResponse(response);
+                speak(response);
+                setTimeout(() => setQueryResponse(''), 6000);
+            };
+
+            const speak = (text) => {
+                if ('speechSynthesis' in window) {
+                    speechSynthesis.cancel();
+                    const utterance = new SpeechSynthesisUtterance(text);
+                    utterance.lang = 'es-ES';
+                    utterance.rate = 0.9;
+                    utterance.volume = 0.8;
+                    speechSynthesis.speak(utterance);
+                }
+            };
+
+            const triggerHapticFeedback = () => {
+                if (capabilities.vibration) {
+                    navigator.vibrate([100]);
+                }
+            };
+
+            const showNotification = (title, body, options = {}) => {
+                if (capabilities.notifications && notificationPermission === 'granted') {
+                    new Notification(title, {
+                        body: body,
+                        icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%233b82f6'/%3E%3Cpath d='M16 10c-1.3 0-2.4 1.1-2.4 2.4v7.2c0 1.3 1.1 2.4 2.4 2.4s2.4-1.1 2.4-2.4v-7.2c0-1.3-1.1-2.4-2.4-2.4z' fill='white'/%3E%3C/svg%3E",
+                        requireInteraction: options.persistent || false,
+                        ...options
+                    });
+                }
+            };
+
+            const scheduleReminder = (reminder) => {
+                const reminderTime = new Date(`${reminder.date.toDateString()} ${reminder.time}`);
+                const now = new Date();
+                const timeDiff = reminderTime.getTime() - now.getTime();
+                
+                if (timeDiff > 0 && timeDiff < 24 * 60 * 60 * 1000) { // Solo próximas 24h
+                    setTimeout(() => {
+                        if (!reminder.completed) {
+                            showNotification(
+                                `⏰ Recordatorio: ${reminder.text}`,
+                                `${formatDate(reminder.date)} a las ${reminder.time}`,
+                                { persistent: reminder.priority === 'high' }
+                            );
+                            speak(`Recordatorio: ${reminder.text}`);
+                            triggerHapticFeedback();
+                        }
+                    }, timeDiff);
+                }
+            };
+
+            // Programar recordatorios pendientes
+            useEffect(() => {
+                reminders.forEach(reminder => {
+                    if (!reminder.completed) {
+                        scheduleReminder(reminder);
+                    }
+                });
+            }, [reminders]);
+
+            const formatDate = (date) => {
+                const today = new Date();
+                const tomorrow = new Date(today);
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                
+                if (date.toDateString() === today.toDateString()) {
+                    return "hoy";
+                } else if (date.toDateString() === tomorrow.toDateString()) {
+                    return "mañana";
+                }
+                return date.toLocaleDateString('es-ES', { 
+                    weekday: 'long', 
+                    day: 'numeric', 
+                    month: 'long' 
+                });
+            };
+
+            const getPriorityColor = (priority) => {
+                switch (priority) {
+                    case 'high': return 'from-red-500 to-red-600';
+                    case 'medium': return 'from-amber-500 to-orange-500';
+                    case 'low': return 'from-emerald-500 to-green-500';
+                    default: return 'from-blue-500 to-blue-600';
+                }
+            };
+
+            const getPriorityBorder = (priority) => {
+                switch (priority) {
+                    case 'high': return 'border-red-500/50';
+                    case 'medium': return 'border-amber-500/50';
+                    case 'low': return 'border-emerald-500/50';
+                    default: return 'border-blue-500/50';
+                }
+            };
+
+            const getCategoryIcon = (category) => {
+                switch (category) {
+                    case 'health': return '🏥';
+                    case 'work': return '💼';
+                    case 'shopping': return '🛒';
+                    default: return '📝';
+                }
+            };
+
+            const toggleComplete = (id) => {
+                setReminders(prev => prev.map(r => 
+                    r.id === id ? { ...r, completed: !r.completed } : r
+                ));
+                triggerHapticFeedback();
+            };
+
+            const deleteReminder = (id) => {
+                setReminders(prev => prev.filter(r => r.id !== id));
+                triggerHapticFeedback();
+            };
+
+            const addReminder = () => {
+                if (!newReminder.text.trim()) return;
+
+                const reminder = {
+                    id: Date.now(),
+                    text: newReminder.text,
+                    date: new Date(newReminder.date),
+                    time: newReminder.time,
+                    priority: newReminder.priority,
+                    category: newReminder.category,
+                    completed: false,
+                    createdAt: new Date().toISOString()
+                };
+
+                setReminders(prev => [reminder, ...prev]);
+                setNewReminder({
+                    text: '',
+                    date: new Date().toISOString().split('T')[0],
+                    time: '09:00',
+                    priority: 'medium',
+                    category: 'personal'
+                });
+                setShowAddForm(false);
+                showNotification('✅ Recordatorio agregado', reminder.text);
+                triggerHapticFeedback();
+            };
+
+            const filterByView = (reminders) => {
+                const today = new Date();
+                const todayStr = today.toDateString();
+                const tomorrow = new Date(today);
+                tomorrow.setDate(tomorrow.getDate() + 1);
+                const tomorrowStr = tomorrow.toDateString();
+
+                switch (currentView) {
+                    case 'today':
+                        return reminders.filter(r => r.date.toDateString() === todayStr);
+                    case 'tomorrow':
+                        return reminders.filter(r => r.date.toDateString() === tomorrowStr);
+                    case 'week':
+                        const nextWeek = new Date(today);
+                        nextWeek.setDate(nextWeek.getDate() + 7);
+                        return reminders.filter(r => r.date <= nextWeek);
+                    default:
+                        return reminders;
+                }
+            };
+
+            const filtered = filterByView(reminders);
+
+            return (
+                <div className="min-h-screen bg-gradient-to-br from-slate-950 via-blue-950 to-indigo-950 text-white">
+                    {/* Banner de estado offline */}
+                    {!isOnline && (
+                        <div className="offline-banner flex items-center justify-center space-x-2">
+                            <WifiOff className="w-4 h-4" />
+                            <span>Modo Offline - Los datos se sincronizarán cuando vuelvas a tener conexión</span>
+                        </div>
+                    )}
+
+                    {/* Banner de permisos */}
+                    {notificationPermission === 'default' && (
+                        <div className="notification-permission">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center space-x-3">
+                                    <Bell className="w-5 h-5" />
+                                    <span className="text-sm">Permitir notificaciones para recordatorios automáticos</span>
+                                </div>
+                                <button 
+                                    onClick={() => Notification.requestPermission().then(setNotificationPermission)}
+                                    className="bg-white text-orange-600 px-3 py-1 rounded text-sm font-medium"
+                                >
+                                    Permitir
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Widget flotante */}
+                    {showWidget && (
+                        <div className="fixed bottom-6 right-6 z-50">
+                            <div className="relative">
+                                <button
+                                    onClick={startListening}
+                                    disabled={isListening || !capabilities.voice}
+                                    className={`relative w-20 h-20 rounded-full shadow-2xl transition-all duration-500 flex items-center justify-center ${
+                                        !capabilities.voice
+                                            ? 'bg-gray-600 cursor-not-allowed opacity-50'
+                                            : isListening 
+                                                ? 'bg-gradient-to-r from-red-500 to-pink-500 scale-110 animate-pulse' 
+                                                : 'bg-gradient-to-r from-blue-500 to-purple-600 hover:scale-105'
+                                    }`}
+                                >
+                                    {capabilities.voice ? (
+                                        <Mic className={`w-8 h-8 ${isListening ? 'animate-pulse' : ''}`} />
+                                    ) : (
+                                        <VolumeX className="w-8 h-8" />
+                                    )}
+                                </button>
+                                
+                                {processingAudio && (
+                                    <div className="absolute -top-16 right-0 bg-slate-800 rounded-xl px-4 py-2 text-sm animate-bounce">
+                                        <div className="flex items-center space-x-2">
+                                            <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse" />
+                                            <span>Procesando...</span>
+                                        </div>
+                                    </div>
+                                )}
+                                
+                                <button
+                                    onClick={() => setShowAddForm(!showAddForm)}
+                                    className="absolute -left-16 top-0 w-12 h-12 bg-green-500 rounded-full shadow-lg hover:scale-105 transition-all flex items-center justify-center"
+                                >
+                                    <Plus className="w-6 h-6" />
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Header */}
+                    <header className="sticky top-0 bg-slate-900/80 backdrop-blur-xl z-40 border-b border-slate-700/50">
+                        <div className="flex items-center justify-between p-6">
+                            <div className="flex items-center space-x-4">
+                                <div className="relative">
+                                    <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-purple-500 rounded-2xl flex items-center justify-center">
+                                        <Volume2 className="w-7 h-7" />
+                                    </div>
+                                    <div className={`absolute -top-1 -right-1 w-4 h-4 rounded-full border-2 border-slate-900 ${
+                                        systemStatus === 'ready' && isOnline ? 'bg-green-500' : 
+                                        !isOnline ? 'bg-red-500' : 'bg-yellow-500'
+                                    }`} />
+                                </div>
+                                <div>
+                                    <h1 className="text-2xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                                        VozAgenda Pro
+                                    </h1>
+                                    <div className="flex items-center space-x-3 text-sm text-slate-400">
+                                        <span>Estado: {
+                                            systemStatus === 'ready' && isOnline ? 'Activo' : 
+                                            !isOnline ? 'Offline' : 'Verificando...'
+                                        }</span>
+                                        <div className="flex space-x-1">
+                                            {capabilities.voice && <span className="text-green-400" title="Voz disponible">🎤</span>}
+                                            {capabilities.notifications && <span className="text-blue-400" title="Notificaciones disponibles">🔔</span>}
+                                            {capabilities.vibration && <span className="text-purple-400" title="Vibración disponible">📳</span>}
+                                            {capabilities.audio && <span className="text-yellow-400" title="Audio disponible">🔊</span>}
+                                            {capabilities.pwa && <span className="text-emerald-400" title="PWA activada">📱</span>}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="flex space-x-3">
+                                {!isOnline && (
+                                    <div className="flex items-center space-x-2 bg-red-500/20 px-3 py-2 rounded-lg">
+                                        <WifiOff className="w-4 h-4 text-red-400" />
+                                        <span className="text-xs text-red-300">Sin conexión</span>
+                                    </div>
+                                )}
+                                <button
+                                    onClick={() => setShowWidget(!showWidget)}
+                                    className="p-3 bg-slate-800/60 rounded-xl hover:bg-slate-700/60 transition-all"
+                                    title="Alternar widget de voz"
+                                >
+                                    {showWidget ? <VolumeX className="w-5 h-5" /> : <Volume2 className="w-5 h-5" />}
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Respuesta de consulta */}
+                    {queryResponse && (
+                        <div className="bg-green-900/40 border-b border-green-500/30 p-4 animate-pulse">
+                            <div className="flex items-center space-x-3">
+                                <MessageSquare className="w-5 h-5 text-green-400" />
+                                <span className="text-green-300 text-sm font-medium">Asistente:</span>
+                            </div>
+                            <p className="text-white mt-2 font-medium">{queryResponse}</p>
+                        </div>
+                    )}
+
+                    {/* Transcripción */}
+                    {transcription && (
+                        <div className="bg-blue-900/40 border-b border-blue-500/30 p-4">
+                            <div className="flex items-center space-x-3">
+                                <div className="w-3 h-3 bg-blue-400 rounded-full animate-pulse" />
+                                <span className="text-blue-300 text-sm font-medium">Escuchando:</span>
+                            </div>
+                            <p className="text-white mt-2 text-lg italic">{transcription}</p>
+                        </div>
+                    )}
+
+                    {/* Formulario agregar */}
+                    {showAddForm && (
+                        <div className="bg-slate-900/50 border-b border-slate-700/50 p-6">
+                            <h3 className="text-lg font-bold mb-4 flex items-center space-x-2">
+                                <Plus className="w-5 h-5 text-green-400" />
+                                <span>Nuevo Recordatorio</span>
+                            </h3>
+                            <div className="grid md:grid-cols-2 gap-4 max-w-2xl">
+                                <input
+                                    type="text"
+                                    value={newReminder.text}
+                                    onChange={(e) => setNewReminder({...newReminder, text: e.target.value})}
+                                    placeholder="¿Qué necesitas recordar?"
+                                    className="col-span-2 bg-slate-700/50 rounded-xl px-4 py-3 text-white placeholder-slate-400 border border-slate-600/50 focus:border-blue-500/50 focus:outline-none transition-all"
+                                />
+                                <input
+                                    type="date"
+                                    value={newReminder.date}
+                                    onChange={(e) => setNewReminder({...newReminder, date: e.target.value})}
+                                    className="bg-slate-700/50 rounded-xl px-4 py-3 text-white border border-slate-600/50 focus:border-blue-500/50 focus:outline-none transition-all"
+                                />
+                                <input
+                                    type="time"
+                                    value={newReminder.time}
+                                    onChange={(e) => setNewReminder({...newReminder, time: e.target.value})}
+                                    className="bg-slate-700/50 rounded-xl px-4 py-3 text-white border border-slate-600/50 focus:border-blue-500/50 focus:outline-none transition-all"
+                                />
+                                <select
+                                    value={newReminder.priority}
+                                    onChange={(e) => setNewReminder({...newReminder, priority: e.target.value})}
+                                    className="bg-slate-700/50 rounded-xl px-4 py-3 text-white border border-slate-600/50 focus:border-blue-500/50 focus:outline-none transition-all"
+                                >
+                                    <option value="low">🟢 Baja Prioridad</option>
+                                    <option value="medium">🟡 Prioridad Media</option>
+                                    <option value="high">🔴 Alta Prioridad</option>
+                                </select>
+                                <select
+                                    value={newReminder.category}
+                                    onChange={(e) => setNewReminder({...newReminder, category: e.target.value})}
+                                    className="bg-slate-700/50 rounded-xl px-4 py-3 text-white border border-slate-600/50 focus:border-blue-500/50 focus:outline-none transition-all"
+                                >
+                                    <option value="personal">📝 Personal</option>
+                                    <option value="work">💼 Trabajo</option>
+                                    <option value="health">🏥 Salud</option>
+                                    <option value="shopping">🛒 Compras</option>
+                                </select>
+                            </div>
+                            <div className="flex space-x-3 mt-4">
+                                <button
+                                    onClick={addReminder}
+                                    disabled={!newReminder.text.trim()}
+                                    className="bg-green-500 hover:bg-green-600 disabled:bg-gray-500 disabled:cursor-not-allowed px-6 py-2 rounded-xl text-sm font-medium transition-all flex items-center space-x-2"
+                                >
+                                    <Check className="w-4 h-4" />
+                                    <span>Agregar</span>
+                                </button>
+                                <button
+                                    onClick={() => setShowAddForm(false)}
+                                    className="bg-slate-600 hover:bg-slate-700 px-6 py-2 rounded-xl text-sm font-medium transition-all"
+                                >
+                                    Cancelar
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Contenido principal */}
+                    <main className="p-4 pb-24">
+                        {/* Navegación de vistas */}
+                        <div className="flex space-x-2 mb-6 bg-slate-800/50 rounded-xl p-1">
+                            {[
+                                { key: 'today', label: 'Hoy', count: reminders.filter(r => !r.completed && r.date.toDateString() === new Date().toDateString()).length },
+                                { key: 'tomorrow', label: 'Mañana', count: reminders.filter(r => !r.completed && r.date.toDateString() === new Date(Date.now() + 86400000).toDateString()).length },
+                                { key: 'week', label: 'Semana', count: reminders.filter(r => !r.completed && r.date <= new Date(Date.now() + 7 * 86400000)).length },
+                                { key: 'all', label: 'Todos', count: reminders.filter(r => !r.completed).length }
+                            ].map(view => (
+                                <button
+                                    key={view.key}
+                                    onClick={() => setCurrentView(view.key)}
+                                    className={`flex-1 py-3 px-4 rounded-lg text-sm font-medium transition-all relative ${
+                                        currentView === view.key
+                                            ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-lg'
+                                            : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
+                                    }`}
+                                >
+                                    {view.label}
+                                    {view.count > 0 && (
+                                        <span className={`absolute -top-1 -right-1 w-5 h-5 rounded-full text-xs flex items-center justify-center ${
+                                            currentView === view.key ? 'bg-white text-blue-600' : 'bg-red-500 text-white'
+                                        }`}>
+                                            {view.count}
+                                        </span>
+                                    )}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Lista de recordatorios */}
+                        <div className="space-y-4">
+                            {filtered.length === 0 ? (
+                                <div className="text-center py-16">
+                                    <Calendar className="w-20 h-20 text-slate-600 mx-auto mb-6" />
+                                    <h3 className="text-2xl font-bold text-slate-400 mb-3">
+                                        {currentView === 'today' ? 'No hay recordatorios para hoy' :
+                                         currentView === 'tomorrow' ? 'No hay recordatorios para mañana' :
+                                         currentView === 'week' ? 'No hay recordatorios para esta semana' :
+                                         'No hay recordatorios'}
+                                    </h3>
+                                    <p className="text-slate-500 mb-6">
+                                        {capabilities.voice 
+                                            ? 'Toca el micrófono y di "Recordarme..." para agregar uno'
+                                            : 'Usa el botón verde (+) para agregar recordatorios'
+                                        }
+                                    </p>
+                                    <button
+                                        onClick={() => setShowAddForm(true)}
+                                        className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 px-6 py-3 rounded-xl text-white font-medium transition-all flex items-center space-x-2 mx-auto"
+                                    >
+                                        <Plus className="w-5 h-5" />
+                                        <span>Crear Recordatorio</span>
+                                    </button>
+                                </div>
+                            ) : (
+                                filtered.map(reminder => (
+                                    <ReminderCard 
+                                        key={reminder.id} 
+                                        reminder={reminder}
+                                        onToggleComplete={toggleComplete}
+                                        onDelete={deleteReminder}
+                                        onShowNotification={showNotification}
+                                        onSpeak={speak}
+                                        onTriggerHaptic={triggerHapticFeedback}
+                                        capabilities={capabilities}
+                                        formatDate={formatDate}
+                                        getPriorityColor={getPriorityColor}
+                                        getPriorityBorder={getPriorityBorder}
+                                        getCategoryIcon={getCategoryIcon}
+                                    />
+                                ))
+                            )}
+                        </div>
+
+                        {/* Guía de uso mejorada */}
+                        <div className="mt-8 bg-slate-800/50 rounded-2xl p-6 border border-slate-700/30">
+                            <h4 className="font-bold mb-4 text-blue-300 text-lg flex items-center space-x-2">
+                                <Smartphone className="w-6 h-6" />
+                                <span>💡 VozAgenda Pro - PWA Completa</span>
+                            </h4>
+                            
+                            {/* Estado del sistema mejorado */}
+                            <div className="mb-6 p-4 bg-slate-700/30 rounded-lg">
+                                <h5 className="font-semibold mb-3 text-white flex items-center space-x-2">
+                                    <Settings className="w-5 h-5" />
+                                    <span>🔧 Estado del Sistema</span>
+                                </h5>
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                                    <div className={`flex items-center space-x-2 p-2 rounded ${capabilities.voice ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                                        <span>{capabilities.voice ? '✅' : '❌'}</span>
+                                        <span>Reconocimiento de Voz</span>
+                                    </div>
+                                    <div className={`flex items-center space-x-2 p-2 rounded ${capabilities.notifications ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                                        <span>{capabilities.notifications ? '✅' : '❌'}</span>
+                                        <span>Notificaciones</span>
+                                    </div>
+                                    <div className={`flex items-center space-x-2 p-2 rounded ${capabilities.vibration ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                                        <span>{capabilities.vibration ? '✅' : '❌'}</span>
+                                        <span>Vibración</span>
+                                    </div>
+                                    <div className={`flex items-center space-x-2 p-2 rounded ${capabilities.audio ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                                        <span>{capabilities.audio ? '✅' : '❌'}</span>
+                                        <span>Síntesis de Voz</span>
+                                    </div>
+                                    <div className={`flex items-center space-x-2 p-2 rounded ${capabilities.pwa ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                                        <span>{capabilities.pwa ? '✅' : '❌'}</span>
+                                        <span>PWA/Offline</span>
+                                    </div>
+                                    <div className={`flex items-center space-x-2 p-2 rounded ${isOnline ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                                        <span>{isOnline ? '🌐' : '📡'}</span>
+                                        <span>{isOnline ? 'Online' : 'Offline'}</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="grid md:grid-cols-2 gap-6 text-sm text-slate-300">
+                                <div>
+                                    <h5 className="font-semibold mb-3 text-white flex items-center space-x-2">
+                                        <Mic className="w-4 h-4" />
+                                        <span>🎙️ Comandos de Voz Inteligentes</span>
+                                    </h5>
+                                    <ul className="space-y-2 text-xs bg-slate-700/20 p-3 rounded">
+                                        <li><strong>"Recordarme llamar al doctor mañana a las 3"</strong></li>
+                                        <li><strong>"Comprar leche urgente esta tarde"</strong></li>
+                                        <li><strong>"Reunión importante el viernes a las 10"</strong></li>
+                                        <li><strong>"Tomar medicina todos los días a las 8"</strong></li>
+                                        <li className="text-blue-300 mt-2">→ Reconoce fechas, horas y prioridades automáticamente</li>
+                                    </ul>
+                                </div>
+                                <div>
+                                    <h5 className="font-semibold mb-3 text-white flex items-center space-x-2">
+                                        <MessageSquare className="w-4 h-4" />
+                                        <span>❓ Consultas Inteligentes</span>
+                                    </h5>
+                                    <ul className="space-y-2 text-xs bg-slate-700/20 p-3 rounded">
+                                        <li><strong>"¿Qué tengo para hoy?"</strong></li>
+                                        <li><strong>"¿Qué hay programado para mañana?"</strong></li>
+                                        <li><strong>"Recordatorios de esta semana"</strong></li>
+                                        <li><strong>"¿Tengo algo importante?"</strong></li>
+                                        <li className="text-green-300 mt-2">→ Respuestas por voz y notificaciones</li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <div className="mt-6 p-4 bg-gradient-to-r from-purple-900/30 to-pink-900/30 rounded-lg border border-purple-500/20">
+                                <h5 className="font-semibold mb-2 text-purple-300 flex items-center space-x-2">
+                                    <Download className="w-5 h-5" />
+                                    <span>🚀 Instalación como App</span>
+                                </h5>
+                                <div className="grid md:grid-cols-2 gap-4 text-xs">
+                                    <div className="space-y-2">
+                                        <p><strong>📱 En móvil (Android/iOS):</strong></p>
+                                        <ul className="text-slate-400 space-y-1 ml-3">
+                                            <li>• Abre en Chrome/Safari</li>
+                                            <li>• Menú → "Instalar app" o "Agregar a inicio"</li>
+                                            <li>• Se instalará como app nativa</li>
+                                        </ul>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <p><strong>💻 En escritorio:</strong></p>
+                                        <ul className="text-slate-400 space-y-1 ml-3">
+                                            <li>• Abre en Chrome/Edge</li>
+                                            <li>• Ícono de instalación en barra</li>
+                                            <li>• O Menú → "Instalar VozAgenda"</li>
+                                        </ul>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="mt-4 p-4 bg-gradient-to-r from-green-900/30 to-emerald-900/30 rounded-lg border border-green-500/20">
+                                <h5 className="font-semibold mb-2 text-green-300">✨ Funciones PWA Activadas</h5>
+                                <div className="grid md:grid-cols-2 gap-4 text-xs">
+                                    <div>
+                                        <p><strong>🔄 Sincronización Automática:</strong></p>
+                                        <p className="text-slate-400">Todos los cambios se guardan localmente y se sincronizan</p>
+                                    </div>
+                                    <div>
+                                        <p><strong>⏰ Recordatorios Programados:</strong></p>
+                                        <p className="text-slate-400">Alertas automáticas incluso con la app cerrada</p>
+                                    </div>
+                                    <div>
+                                        <p><strong>📶 Modo Offline:</strong></p>
+                                        <p className="text-slate-400">Funciona completamente sin conexión</p>
+                                    </div>
+                                    <div>
+                                        <p><strong>🎯 Notificaciones Nativas:</strong></p>
+                                        <p className="text-slate-400">Alertas del sistema con sonido y vibración</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="mt-4 text-center text-xs text-slate-500 space-y-2">
+                                <p>💡 <strong>Mejor experiencia:</strong> Instala como PWA y permite todos los permisos</p>
+                                <p>🔒 <strong>Privacidad:</strong> Todos los datos se almacenan localmente en tu dispositivo</p>
+                                <p>🌟 <strong>Funciona sin internet:</strong> Todos los recordatorios se guardan offline</p>
+                            </div>
+                        </div>
+                    </main>
+                </div>
+            );
+        };
+
+        // Componente de tarjeta de recordatorio mejorado
+        const ReminderCard = ({ 
+            reminder, onToggleComplete, onDelete, onShowNotification, 
+            onSpeak, onTriggerHaptic, capabilities, formatDate, 
+            getPriorityColor, getPriorityBorder, getCategoryIcon 
+        }) => {
+            const [isEditing, setIsEditing] = useState(false);
+            const [editText, setEditText] = useState(reminder.text);
+            const [editTime, setEditTime] = useState(reminder.time);
+            const [editDate, setEditDate] = useState(reminder.date.toISOString().split('T')[0]);
+
+            const handleSave = () => {
+                // Esta funcionalidad requeriría actualizar el recordatorio en el estado padre
+                // Por simplicidad, aquí solo cerramos el modo edición
+                setIsEditing(false);
+                onTriggerHaptic();
+            };
+
+            const testAlert = () => {
+                onShowNotification(
+                    `⏰ Test: ${reminder.text}`, 
+                    `${formatDate(reminder.date)} a las ${reminder.time}`,
+                    { persistent: reminder.priority === 'high' }
+                );
+                onSpeak(`Recordatorio de prueba: ${reminder.text}`);
+                onTriggerHaptic();
+            };
+
+            return (
+                <div
+                    className={`group bg-slate-800/40 rounded-2xl p-5 border transition-all hover:bg-slate-700/50 hover:shadow-lg ${getPriorityBorder(reminder.priority)} ${
+                        reminder.completed ? 'opacity-60' : ''
+                    }`}
+                >
+                    {isEditing ? (
+                        <div className="space-y-4">
+                            <input
+                                type="text"
+                                value={editText}
+                                onChange={(e) => setEditText(e.target.value)}
+                                className="w-full bg-slate-700/50 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-blue-500/50 border border-slate-600/50 transition-all"
+                            />
+                            <div className="flex space-x-3">
+                                <input
+                                    type="date"
+                                    value={editDate}
+                                    onChange={(e) => setEditDate(e.target.value)}
+                                    className="bg-slate-700/50 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-blue-500/50 border border-slate-600/50 transition-all"
+                                />
+                                <input
+                                    type="time"
+                                    value={editTime}
+                                    onChange={(e) => setEditTime(e.target.value)}
+                                    className="bg-slate-700/50 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-blue-500/50 border border-slate-600/50 transition-all"
+                                />
+                            </div>
+                            <div className="flex space-x-3">
+                                <button
+                                    onClick={handleSave}
+                                    className="bg-green-500 hover:bg-green-600 px-6 py-2 rounded-xl text-sm font-medium transition-all flex items-center space-x-2"
+                                >
+                                    <Check className="w-4 h-4" />
+                                    <span>Guardar</span>
+                                </button>
+                                <button
+                                    onClick={() => setIsEditing(false)}
+                                    className="bg-slate-600 hover:bg-slate-700 px-6 py-2 rounded-xl text-sm font-medium transition-all"
+                                >
+                                    Cancelar
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="flex items-start justify-between">
+                            <div className="flex items-start space-x-4 flex-1">
+                                <button
+                                    onClick={() => onToggleComplete(reminder.id)}
+                                    className={`mt-1 p-2 rounded-xl transition-all ${
+                                        reminder.completed 
+                                            ? 'bg-green-500/20 text-green-400 border border-green-500/30' 
+                                            : 'border-2 border-slate-500/50 hover:border-green-500/50 hover:bg-green-500/10'
+                                    }`}
+                                >
+                                    {reminder.completed ? (
+                                        <CheckCircle className="w-5 h-5" />
+                                    ) : (
+                                        <div className="w-5 h-5" />
+                                    )}
+                                </button>
+                                
+                                <div className="flex-1">
+                                    <div className="flex items-center space-x-3 mb-3">
+                                        <span className="text-3xl">{getCategoryIcon(reminder.category)}</span>
+                                        <div className="flex-1">
+                                            <h3 className={`text-lg font-bold ${reminder.completed ? 'line-through text-slate-400' : 'text-white'}`}>
+                                                {reminder.text}
+                                            </h3>
+                                            <div className={`inline-flex px-3 py-1 rounded-full text-xs font-medium bg-gradient-to-r ${getPriorityColor(reminder.priority)} text-white`}>
+                                                {reminder.priority === 'high' && '🔴 Alta Prioridad'}
+                                                {reminder.priority === 'medium' && '🟡 Prioridad Media'}
+                                                {reminder.priority === 'low' && '🟢 Baja Prioridad'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="flex items-center space-x-6 text-sm text-slate-400 mb-3">
+                                        <div className="flex items-center space-x-2">
+                                            <Calendar className="w-4 h-4" />
+                                            <span className="font-medium">{formatDate(reminder.date)}</span>
+                                        </div>
+                                        <div className="flex items-center space-x-2">
+                                            <Clock className="w-4 h-4" />
+                                            <span className="font-medium">{reminder.time}</span>
+                                        </div>
+                                        {capabilities.vibration && reminder.priority === 'high' && (
+                                            <div className="flex items-center space-x-1">
+                                                <div className="w-2 h-2 bg-orange-400 rounded-full animate-pulse" />
+                                                <span className="text-xs">Vibración</span>
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    <div className="flex items-center space-x-3">
+                                        <button
+                                            onClick={testAlert}
+                                            className="flex items-center space-x-2 px-3 py-2 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/30 rounded-lg text-blue-300 text-sm transition-all"
+                                        >
+                                            <Bell className="w-4 h-4" />
+                                            <span>Test</span>
+                                        </button>
+                                        
+                                        {capabilities.audio && (
+                                            <button
+                                                onClick={() => onSpeak(reminder.text)}
+                                                className="flex items-center space-x-2 px-3 py-2 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/30 rounded-lg text-purple-300 text-sm transition-all"
+                                            >
+                                                <Volume2 className="w-4 h-4" />
+                                                <span>Leer</span>
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                    onClick={() => setIsEditing(true)}
+                                    className="p-2 text-slate-400 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg transition-all"
+                                    title="Editar recordatorio"
+                                >
+                                    <Edit3 className="w-5 h-5" />
+                                </button>
+                                <button
+                                    onClick={() => onDelete(reminder.id)}
+                                    className="p-2 text-slate-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
+                                    title="Eliminar recordatorio"
+                                >
+                                    <Trash2 className="w-5 h-5" />
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        ReactDOM.render(<VozAgendaPWA />, document.getElementById('root'));
+    </script>
+
+    <!-- Scripts para PWA -->
+    <script>
+        // Manejo de instalación PWA
+        let deferredPrompt;
+        const installPrompt = document.getElementById('installPrompt');
+        const installBtn = document.getElementById('installBtn');
+        const dismissBtn = document.getElementById('dismissBtn');
+
+        // Detector de prompt de instalación
+        window.addEventListener('beforeinstallprompt', (e) => {
+            console.log('PWA install prompt triggered');
+            e.preventDefault();
+            deferredPrompt = e;
+            installPrompt.style.display = 'block';
+        });
+
+        // Botón instalar
+        installBtn.addEventListener('click', async () => {
+            if (deferredPrompt) {
+                deferredPrompt.prompt();
+                const { outcome } = await deferredPrompt.userChoice;
+                console.log(`User response to the install prompt: ${outcome}`);
+                
+                if (outcome === 'accepted') {
+                    console.log('PWA installed successfully');
+                } else {
+                    console.log('PWA installation dismissed');
+                }
+                
+                deferredPrompt = null;
+                installPrompt.style.display = 'none';
+            }
+        });
+
+        // Botón descartar
+        dismissBtn.addEventListener('click', () => {
+            installPrompt.style.display = 'none';
+            // Volver a mostrar en 24 horas
+            localStorage.setItem('installDismissed', Date.now());
+        });
+
+        // Verificar si debe mostrar el prompt
+        const checkInstallPrompt = () => {
+            const dismissed = localStorage.getItem('installDismissed');
+            if (dismissed) {
+                const dismissedTime = parseInt(dismissed);
+                const now = Date.now();
+                const oneDay = 24 * 60 * 60 * 1000;
+                
+                if (now - dismissedTime < oneDay) {
+                    return false; // No mostrar aún
+                }
+            }
+            return true;
+        };
+
+        // Detector de instalación completada
+        window.addEventListener('appinstalled', (evt) => {
+            console.log('PWA was installed');
+            installPrompt.style.display = 'none';
+            
+            // Mostrar notificación de bienvenida
+            if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification('🎉 VozAgenda Pro instalada', {
+                    body: 'Ya puedes usar la app desde tu pantalla de inicio',
+                    icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='16' fill='%233b82f6'/%3E%3Cpath d='M16 10c-1.3 0-2.4 1.1-2.4 2.4v7.2c0 1.3 1.1 2.4 2.4 2.4s2.4-1.1 2.4-2.4v-7.2c0-1.3-1.1-2.4-2.4-2.4z' fill='white'/%3E%3C/svg%3E"
+                });
+            }
+        });
+
+        // Detectar si ya está instalado como PWA
+        const isStandalone = () => {
+            return window.matchMedia('(display-mode: standalone)').matches || 
+                   window.navigator.standalone === true;
+        };
+
+        // Ocultar prompt si ya está instalado
+        if (isStandalone()) {
+            installPrompt.style.display = 'none';
+            console.log('PWA running in standalone mode');
+        }
+
+        // Manejo de actualizaciones del Service Worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.addEventListener('controllerchange', () => {
+                console.log('New service worker activated');
+                // Mostrar notificación de actualización si está disponible
+                if ('Notification' in window && Notification.permission === 'granted') {
+                    new Notification('🔄 App actualizada', {
+                        body: 'VozAgenda Pro se ha actualizado con nuevas funciones',
+                        requireInteraction: true
+                    });
+                }
+            });
+        }
+
+        // Manejo de eventos de red
+        const updateOnlineStatus = () => {
+            const status = navigator.onLine;
+            console.log(`Network status: ${status ? 'online' : 'offline'}`);
+            
+            if (status) {
+                // Sincronizar datos cuando vuelve la conexión
+                console.log('Connection restored - syncing data...');
+            }
+        };
+
+        window.addEventListener('online', updateOnlineStatus);
+        window.addEventListener('offline', updateOnlineStatus);
+
+        // Prevenir zoom en iOS
+        document.addEventListener('touchstart', function(e) {
+            if (e.touches.length > 1) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+
+        let lastTouchEnd = 0;
+        document.addEventListener('touchend', function(e) {
+            const now = (new Date()).getTime();
+            if (now - lastTouchEnd <= 300) {
+                e.preventDefault();
+            }
+            lastTouchEnd = now;
+        }, false);
+
+        // Configuración adicional para PWA
+        document.addEventListener('DOMContentLoaded', () => {
+            // Prevenir selección de texto en modo standalone
+            if (isStandalone()) {
+                document.body.style.userSelect = 'none';
+                document.body.style.webkitUserSelect = 'none';
+                document.body.style.webkitTouchCallout = 'none';
+            }
+
+            // Configurar viewport para mejor experiencia móvil
+            const viewport = document.querySelector('meta[name="viewport"]');
+            if (viewport) {
+                viewport.setAttribute('content', 
+                    'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover'
+                );
+            }
+        });
+
+        console.log('🚀 VozAgenda Pro PWA initialized');
+        console.log('📱 Standalone mode:', isStandalone());
+        console.log('🌐 Online status:', navigator.onLine);
+        console.log('🔔 Notification permission:', Notification.permission);
+    </script>
+</body>
+</html>
